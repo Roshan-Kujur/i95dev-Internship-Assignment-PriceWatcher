@@ -1,0 +1,13 @@
+================================================================ FAILURES ================================================================
+________________________________________________ test_maple_sale_item_reports_sale_price _________________________________________________
+
+    def test_maple_sale_item_reports_sale_price():
+        o = extract_maple(Client(), "maple", "http://x/stores/maple/products/kestrel-lumen-notebook", HTML)
+>       assert o.price_cents == 72092
+E       AssertionError: assert 9372000 == 72092
+E        +  where 9372000 = Observation(store='maple', product_id='kestrel-lumen-notebook', url='http://x/stores/maple/products/kestrel-lumen-note...n_stock', pack_size=1, unit_price_cents=None, observed_at='2026-11-03T19:29:23.085659+00:00', source='rules', notes=[]).price_cents
+
+tests\test_extractor_maple.py:12: AssertionError
+======================================================== short test summary info =========================================================
+FAILED tests/test_extractor_maple.py::test_maple_sale_item_reports_sale_price - AssertionError: assert 9372000 == 72092
+====================================================== 1 failed, 8 passed in 2.43s =======================================================

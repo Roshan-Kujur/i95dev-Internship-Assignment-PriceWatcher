@@ -19,6 +19,8 @@ from .agents import extractor
 from .http import Client
 from .models import Observation
 
+from urllib.parse import urlparse
+
 
 def cmd_scan(a: argparse.Namespace) -> int:
     from . import orchestrator
@@ -35,18 +37,65 @@ def cmd_scan(a: argparse.Namespace) -> int:
     return 0
 
 
+# def cmd_extract(a: argparse.Namespace) -> int:
+#     cfg = config.load_stores(a.stores_file)
+#     store = a.store or next((s for s in cfg["stores"] if f"/stores/{s}/" in a.url), None)
+#     if store is None:
+#         print("cannot infer --store from url", file=sys.stderr)
+#         return 2
+#     client = Client()
+#     html = Path(a.html).read_text() if a.html else client.get(a.url).text
+#     if a.llm:
+#         from .agents.llm_extractor import extract_with_llm
+#         from .providers import load_provider
+#         obs = extract_with_llm(load_provider(a.provider), store, a.url, html)
+#     else:
+#         obs = extractor.extract(client, store, cfg["stores"].get(store, {}).get("adapter", store), a.url, html)
+#     print(json.dumps(obs.to_dict(), indent=2))
+#     return 0
+
+# Modified cmd_extarct 
+
 def cmd_extract(a: argparse.Namespace) -> int:
-    cfg = config.load_stores(a.stores_file)
+    try:
+        cfg = config.load_stores(a.stores_file)
+    except Exception:
+        cfg = {"stores": {}}
     store = a.store or next((s for s in cfg["stores"] if f"/stores/{s}/" in a.url), None)
     if store is None:
-        print("cannot infer --store from url", file=sys.stderr)
-        return 2
+        if not a.llm:
+            print("cannot infer --store from url", file=sys.stderr)
+            return 2
+        store = urlparse(a.url).hostname or "unknown"
     client = Client()
-    html = Path(a.html).read_text() if a.html else client.get(a.url).text
+    html = Path(a.html).read_text(errors="replace") if a.html else client.get(a.url).text
     if a.llm:
         from .agents.llm_extractor import extract_with_llm
         from .providers import load_provider
-        obs = extract_with_llm(load_provider(a.provider), store, a.url, html)
+        try:
+            obs = extract_with_llm(load_provider(a.provider), store, a.url, html)
+        # except Exception as e:  # never crash: print an "unknown" observation
+        #     logging.warning("llm extraction failed: %s", e)
+        #     obs = Observation(
+        #         store=store, product_id=a.url.split("?")[0].rstrip("/").split("/")[-1], url=a.url,
+        #         name="", price_cents=None, currency="", compare_at_cents=None,
+        #         availability="unknown", pack_size=1, source="llm",
+        #     )
+        except Exception as e:
+            print(
+                f"LLM extraction failed: {type(e).__name__}: {e}",
+                file=sys.stderr
+            )
+            obs = Observation(
+                store=store,
+                product_id=a.url.rstrip("/").split("/")[-1],
+                url=a.url,
+                name="",
+                price_cents=None,
+                currency="",
+                availability="unknown",
+                source="llm",
+            )
     else:
         obs = extractor.extract(client, store, cfg["stores"].get(store, {}).get("adapter", store), a.url, html)
     print(json.dumps(obs.to_dict(), indent=2))

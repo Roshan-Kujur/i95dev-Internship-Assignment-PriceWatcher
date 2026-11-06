@@ -6,6 +6,7 @@ stay in one place.
 
 Adapters are registered by name; `stores.yaml` maps each store to an adapter.
 """
+# The Necessary Imports 
 from __future__ import annotations
 
 import json
@@ -52,20 +53,77 @@ def extract_corner(client: Client, store: str, url: str, html: str) -> Observati
 
 
 # --------------------------------------------------------------------------- level 2
-@adapter("maple")
-def extract_maple(client: Client, store: str, url: str, html: str) -> Observation:
-    soup = BeautifulSoup(html, "html.parser")
-    name = soup.select_one(".product__title").get_text(strip=True)
-    price_el = soup.select_one(".price .price")  # first price element in the price block
-    price_cents, currency = parse_money(price_el.get_text(" ", strip=True), "EUR")
-    compare_el = soup.select_one(".price--compare")
-    compare, _ = parse_money(compare_el.get_text(" ", strip=True), currency) if compare_el else (None, None)
-    avail = "out_of_stock" if "Sold out" in soup.get_text() else "in_stock"
-    return Observation(
-        store=store, product_id=_pid_from_url(url), url=url, name=name,
-        price_cents=price_cents, currency=currency or "EUR", compare_at_cents=compare, availability=avail,
-    )
+# @adapter("maple")
+# def extract_maple(client: Client, store: str, url: str, html: str) -> Observation:
+#     soup = BeautifulSoup(html, "html.parser")
+#     name = soup.select_one(".product__title").get_text(strip=True)
+#     price_el = soup.select_one(".price .price")  # first price element in the price block
+#     price_cents, currency = parse_money(price_el.get_text(" ", strip=True), "EUR")
+#     compare_el = soup.select_one(".price--compare")
+#     compare, _ = parse_money(compare_el.get_text(" ", strip=True), currency) if compare_el else (None, None)
+#     avail = "out_of_stock" if "Sold out" in soup.get_text() else "in_stock"
+#     return Observation(
+#         store=store, product_id=_pid_from_url(url), url=url, name=name,
+#         price_cents=price_cents, currency=currency or "EUR", compare_at_cents=compare, availability=avail,
+#     )
 
+
+# --------- My Revised Extract Maple Function ----------------- 
+
+# Maple prints each variant as an <option>, e.g. "Navy / S — 98,72 €". The text before the
+# dash is the variant label; the text after it is the price. The option's `value` is a
+# stable variant id, so each variant gets its own price history: "<product>#<variant id>".
+_OPTION_PRICE = re.compile(r"[—–-]\s*(\d[\d.,\s\u00a0\u202f]*\s*(?:€|EUR)?)\s*$")
+
+
+@adapter("maple")
+def extract_maple(client: Client, store: str, url: str, html: str) -> list[Observation]:
+    soup = BeautifulSoup(html, "html.parser")
+    main = soup.select_one(".product") or soup  # stay inside the main product block
+    title_el = main.select_one(".product__title")
+    name = title_el.get_text(strip=True) if title_el else ""
+    pid = _pid_from_url(url)
+
+    # Old (crossed-out) price. Only the selected variant gets it, because the page
+    # shows a single compare price.
+    compare_el = main.select_one(".price--compare")
+    compare, _ = parse_money(compare_el.get_text(" ", strip=True), "EUR") if compare_el else (None, None)
+
+    # The page prints one stock line for the whole product.
+    note_el = main.select_one(".muted")
+    note_text = note_el.get_text(" ", strip=True).lower() if note_el else ""
+    page_sold_out = "sold out" in note_text or "out of stock" in note_text
+
+    results: list[Observation] = []
+    for opt in main.select("select[name=variant] option"):
+        text = opt.get_text(" ", strip=True)
+        m = _OPTION_PRICE.search(text)
+        if not m:
+            continue  # a placeholder option such as "Choose a variant"
+        label = text[:m.start()].strip()
+        price_cents, currency = parse_money(m.group(1), "EUR")
+        variant_id = opt.get("value") or label
+        sold_out = page_sold_out or opt.has_attr("disabled")
+        results.append(Observation(
+            store=store, product_id=f"{pid}#{variant_id}", url=url,
+            name=f"{name} ({label})" if label else name,
+            price_cents=price_cents, currency=currency or "EUR",
+            compare_at_cents=compare if opt.has_attr("selected") else None,
+            availability="out_of_stock" if sold_out else "in_stock",
+        ))
+
+    if results:
+        return results
+
+    # No dropdown: a single-variant product. Read the sale price, never the compare price.
+    sale_el = main.select_one(".price--sale") or main.select_one(".price .price:not(.price--compare)")
+    price_cents, currency = parse_money(sale_el.get_text(" ", strip=True), "EUR") if sale_el else (None, "EUR")
+    return [Observation(
+        store=store, product_id=pid, url=url, name=name,
+        price_cents=price_cents, currency=currency or "EUR", compare_at_cents=compare,
+        availability="out_of_stock" if page_sold_out else "in_stock",
+        notes=[] if price_cents is not None else ["no price found"],
+    )]
 
 # --------------------------------------------------------------------------- level 3
 # Class names used by Zon's product page template.
